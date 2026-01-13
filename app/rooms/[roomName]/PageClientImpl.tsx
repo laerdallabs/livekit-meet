@@ -118,6 +118,9 @@ function VideoConferenceComponent(props: {
       videoSimulcastLayers: [VideoPresets43.h480],
       red: !e2eeEnabled,
       videoCodec,
+      videoEncoding: {
+        maxBitrate: 1_500_000
+      }
     };
     return {
       videoCaptureDefaults: videoCaptureDefaults,
