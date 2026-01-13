@@ -25,6 +25,7 @@ import {
   RoomEvent,
   TrackPublishDefaults,
   VideoCaptureOptions,
+  VideoPresets43,
 } from 'livekit-client';
 import { useRouter } from 'next/navigation';
 import { useSetupE2EE } from '@/lib/useSetupE2EE';
@@ -110,13 +111,11 @@ function VideoConferenceComponent(props: {
     }
     const videoCaptureDefaults: VideoCaptureOptions = {
       deviceId: props.userChoices.videoDeviceId ?? undefined,
-      resolution: props.options.hq ? VideoPresets.h2160 : VideoPresets.h720,
+      resolution: VideoPresets43.h480,
     };
     const publishDefaults: TrackPublishDefaults = {
       dtx: false,
-      videoSimulcastLayers: props.options.hq
-        ? [VideoPresets.h1080, VideoPresets.h720]
-        : [VideoPresets.h540, VideoPresets.h216],
+      videoSimulcastLayers: [VideoPresets43.h480],
       red: !e2eeEnabled,
       videoCodec,
     };
