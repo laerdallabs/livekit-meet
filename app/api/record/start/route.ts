@@ -1,9 +1,16 @@
-import { EgressClient, EncodedFileOutput, S3Upload } from 'livekit-server-sdk';
+import { EgressClient, S3Upload, SegmentedFileOutput } from 'livekit-server-sdk';
 import { NextRequest, NextResponse } from 'next/server';
+
+// Reject identities / room names that would break the S3 key layout or escape
+// the prefix. Both are caller-controlled and interpolated straight into a path.
+function isValidSegment(s: string) {
+  return s.length > 0 && !/[\\/\x00]/.test(s) && !s.startsWith('.');
+}
 
 export async function GET(req: NextRequest) {
   try {
     const roomName = req.nextUrl.searchParams.get('roomName');
+    const identity = req.nextUrl.searchParams.get('identity');
 
     /**
      * CAUTION:
@@ -14,6 +21,15 @@ export async function GET(req: NextRequest) {
 
     if (roomName === null) {
       return new NextResponse('Missing roomName parameter', { status: 403 });
+    }
+    if (identity === null) {
+      return new NextResponse('Missing identity parameter', { status: 403 });
+    }
+    if (!isValidSegment(roomName)) {
+      return new NextResponse('Invalid roomName parameter', { status: 400 });
+    }
+    if (!isValidSegment(identity)) {
+      return new NextResponse('Invalid identity parameter', { status: 400 });
     }
 
     const {
@@ -32,13 +48,25 @@ export async function GET(req: NextRequest) {
 
     const egressClient = new EgressClient(hostURL.origin, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
 
+    // Per-participant guard: it's fine for two participants in the same room to
+    // each record themselves concurrently. Only block if *this* identity is already
+    // being recorded.
     const existingEgresses = await egressClient.listEgress({ roomName });
-    if (existingEgresses.length > 0 && existingEgresses.some((e) => e.status < 2)) {
-      return new NextResponse('Meeting is already being recorded', { status: 409 });
+    const myActive = existingEgresses.filter(
+      (e) =>
+        e.status < 2 && e.request.case === 'participant' && e.request.value.identity === identity,
+    );
+    if (myActive.length > 0) {
+      return new NextResponse('Participant is already being recorded', { status: 409 });
     }
 
-    const fileOutput = new EncodedFileOutput({
-      filepath: `${new Date(Date.now()).toISOString()}-${roomName}.mp4`,
+    const recordingPrefix = `${roomName}/${identity}/${new Date(Date.now()).toISOString()}`;
+
+    // Segmented output = hls with .ts segments vs. encoded file output = single .mp4
+    const segmentsOutput = new SegmentedFileOutput({
+      filenamePrefix: `${recordingPrefix}/segment`,
+      playlistName: `${recordingPrefix}/playlist.m3u8`,
+      segmentDuration: 5,
       output: {
         case: 's3',
         value: new S3Upload({
@@ -51,19 +79,23 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    await egressClient.startRoomCompositeEgress(
+    const egressInfo = await egressClient.startParticipantEgress(roomName, identity, {
+      segments: segmentsOutput,
+    });
+
+    console.log('[record/start] participant egress started', {
+      egressId: egressInfo.egressId,
       roomName,
-      {
-        file: fileOutput,
-      },
-      {
-        layout: 'speaker',
-      },
-    );
+      identity,
+      status: egressInfo.status,
+      prefix: recordingPrefix,
+      error: egressInfo.error,
+    });
 
     return new NextResponse(null, { status: 200 });
   } catch (error) {
     if (error instanceof Error) {
+      console.error('[record/start] failed', error);
       return new NextResponse(error.message, { status: 500 });
     }
   }

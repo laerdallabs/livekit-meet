@@ -56,11 +56,15 @@ export function SettingsMenu(props: SettingsMenuProps) {
     }
     setProcessingRecRequest(true);
     setInitialRecStatus(isRecording);
+    const roomName = encodeURIComponent(room.name);
+    const identity = encodeURIComponent(room.localParticipant.identity);
     let response: Response;
     if (isRecording) {
-      response = await fetch(recordingEndpoint + `/stop?roomName=${room.name}`);
+      response = await fetch(recordingEndpoint + `/stop?roomName=${roomName}&identity=${identity}`);
     } else {
-      response = await fetch(recordingEndpoint + `/start?roomName=${room.name}`);
+      response = await fetch(
+        recordingEndpoint + `/start?roomName=${roomName}&identity=${identity}`,
+      );
     }
     if (response.ok) {
     } else {
