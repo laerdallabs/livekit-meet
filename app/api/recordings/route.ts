@@ -133,7 +133,18 @@ async function findPlaylists(client: S3Client, bucket: string) {
 }
 
 export async function GET(req: Request) {
-  const { S3_BUCKET, S3_REGION, S3_ENDPOINT, S3_KEY_ID, S3_KEY_SECRET } = process.env;
+  const {
+    NEXT_PUBLIC_SHOW_RECORDINGS,
+    S3_BUCKET,
+    S3_REGION,
+    S3_ENDPOINT,
+    S3_KEY_ID,
+    S3_KEY_SECRET,
+  } = process.env;
+
+  if (NEXT_PUBLIC_SHOW_RECORDINGS !== 'true') {
+    return new NextResponse('Recordings feature not configured', { status: 404 });
+  }
 
   if (!S3_BUCKET || !S3_REGION) {
     return new NextResponse('Recordings feature not configured', { status: 404 });

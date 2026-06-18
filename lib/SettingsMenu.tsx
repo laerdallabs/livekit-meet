@@ -6,7 +6,6 @@ import {
   MediaDeviceMenu,
   TrackToggle,
   useRoomContext,
-  useIsRecording,
 } from '@livekit/components-react';
 import styles from '../styles/SettingsMenu.module.css';
 import { CameraSettings } from './CameraSettings';
@@ -37,15 +36,12 @@ export function SettingsMenu(props: SettingsMenuProps) {
   );
   const [activeTab, setActiveTab] = React.useState(tabs[0]);
 
-  const isRecording = useIsRecording();
-  const [initialRecStatus, setInitialRecStatus] = React.useState(isRecording);
+  // Local-only recording state. We use participant egress, so each tab records
+  // independently. The room-scoped useIsRecording() hook would flip true for
+  // everyone whenever anyone records, which doesn't match our per-participant
+  // model. Refresh forgets this state; the egress keeps running server-side.
+  const [isRecording, setIsRecording] = React.useState(false);
   const [processingRecRequest, setProcessingRecRequest] = React.useState(false);
-
-  React.useEffect(() => {
-    if (initialRecStatus !== isRecording) {
-      setProcessingRecRequest(false);
-    }
-  }, [isRecording, initialRecStatus]);
 
   const toggleRoomRecording = async () => {
     if (!recordingEndpoint) {
@@ -55,7 +51,6 @@ export function SettingsMenu(props: SettingsMenuProps) {
       throw Error('Recording of encrypted meetings is currently not supported');
     }
     setProcessingRecRequest(true);
-    setInitialRecStatus(isRecording);
     const roomName = encodeURIComponent(room.name);
     const identity = encodeURIComponent(room.localParticipant.identity);
     let response: Response;
@@ -67,14 +62,15 @@ export function SettingsMenu(props: SettingsMenuProps) {
       );
     }
     if (response.ok) {
+      setIsRecording(!isRecording);
     } else {
       console.error(
         'Error handling recording request, check server logs:',
         response.status,
         response.statusText,
       );
-      setProcessingRecRequest(false);
     }
+    setProcessingRecRequest(false);
   };
 
   return (
