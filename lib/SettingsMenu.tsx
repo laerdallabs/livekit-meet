@@ -1,11 +1,10 @@
 'use client';
 import * as React from 'react';
-import { Track } from 'livekit-client';
 import {
   useMaybeLayoutContext,
   MediaDeviceMenu,
-  TrackToggle,
   useRoomContext,
+  useIsRecording,
 } from '@livekit/components-react';
 import styles from '../styles/SettingsMenu.module.css';
 import { CameraSettings } from './CameraSettings';
@@ -36,12 +35,18 @@ export function SettingsMenu(props: SettingsMenuProps) {
   );
   const [activeTab, setActiveTab] = React.useState(tabs[0]);
 
-  // Local-only recording state. We use participant egress, so each tab records
-  // independently. The room-scoped useIsRecording() hook would flip true for
-  // everyone whenever anyone records, which doesn't match our per-participant
-  // model. Refresh forgets this state; the egress keeps running server-side.
-  const [isRecording, setIsRecording] = React.useState(false);
+  // Recording is room-scoped: clicking Start snapshots all current
+  // participants and starts a participant egress for each. The room-wide
+  // isRecording flag flips true as soon as any of those egresses is active.
+  const isRecording = useIsRecording();
+  const [initialRecStatus, setInitialRecStatus] = React.useState(isRecording);
   const [processingRecRequest, setProcessingRecRequest] = React.useState(false);
+
+  React.useEffect(() => {
+    if (initialRecStatus !== isRecording) {
+      setProcessingRecRequest(false);
+    }
+  }, [isRecording, initialRecStatus]);
 
   const toggleRoomRecording = async () => {
     if (!recordingEndpoint) {
@@ -51,26 +56,18 @@ export function SettingsMenu(props: SettingsMenuProps) {
       throw Error('Recording of encrypted meetings is currently not supported');
     }
     setProcessingRecRequest(true);
+    setInitialRecStatus(isRecording);
     const roomName = encodeURIComponent(room.name);
-    const identity = encodeURIComponent(room.localParticipant.identity);
-    let response: Response;
-    if (isRecording) {
-      response = await fetch(recordingEndpoint + `/stop?roomName=${roomName}&identity=${identity}`);
-    } else {
-      response = await fetch(
-        recordingEndpoint + `/start?roomName=${roomName}&identity=${identity}`,
-      );
-    }
-    if (response.ok) {
-      setIsRecording(!isRecording);
-    } else {
+    const action = isRecording ? 'stop' : 'start';
+    const response = await fetch(`${recordingEndpoint}/${action}?roomName=${roomName}`);
+    if (!response.ok) {
       console.error(
         'Error handling recording request, check server logs:',
         response.status,
         response.statusText,
       );
+      setProcessingRecRequest(false);
     }
-    setProcessingRecRequest(false);
   };
 
   return (

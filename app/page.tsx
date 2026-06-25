@@ -46,6 +46,7 @@ function DemoMeetingTab(props: { label: string }) {
   const router = useRouter();
   const [e2ee, setE2ee] = useState(false);
   const [sharedPassphrase, setSharedPassphrase] = useState(randomString(64));
+  const [joinRoomInput, setJoinRoomInput] = useState('');
   const showRecordings = process.env.NEXT_PUBLIC_SHOW_RECORDINGS === 'true';
   const startMeeting = () => {
     if (e2ee) {
@@ -54,12 +55,45 @@ function DemoMeetingTab(props: { label: string }) {
       router.push(`/rooms/${generateRoomId()}`);
     }
   };
+  const joinMeeting = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const raw = joinRoomInput.trim();
+    if (!raw) return;
+    // Accept either a bare room id or a full URL like http://host/rooms/<id>[#passphrase]
+    let id = raw;
+    let hash = '';
+    const urlMatch = raw.match(/\/rooms\/([^/?#]+)(#.*)?$/);
+    if (urlMatch) {
+      id = urlMatch[1];
+      hash = urlMatch[2] ?? '';
+    } else {
+      const hashIdx = raw.indexOf('#');
+      if (hashIdx >= 0) {
+        id = raw.slice(0, hashIdx);
+        hash = raw.slice(hashIdx);
+      }
+    }
+    router.push(`/rooms/${encodeURIComponent(id)}${hash}`);
+  };
   return (
     <div className={styles.tabContent}>
       <p style={{ margin: 0 }}>Try LiveKit Meet for free with our live demo project.</p>
       <button style={{ marginTop: '1rem' }} className="lk-button" onClick={startMeeting}>
         Start Meeting
       </button>
+      <form onSubmit={joinMeeting} style={{ display: 'flex', gap: '0.5rem' }}>
+        <input
+          type="text"
+          value={joinRoomInput}
+          onChange={(ev) => setJoinRoomInput(ev.target.value)}
+          placeholder="Room ID or meeting URL"
+          aria-label="Room ID or meeting URL"
+          style={{ flex: 1, padding: '0 0.5rem' }}
+        />
+        <button type="submit" className="lk-button" disabled={joinRoomInput.trim() === ''}>
+          Join Meeting
+        </button>
+      </form>
       {showRecordings && (
         <Link
           className="lk-button"

@@ -1,16 +1,14 @@
-import { EgressClient, S3Upload, SegmentedFileOutput } from 'livekit-server-sdk';
+import { EgressClient, RoomServiceClient, S3Upload, SegmentedFileOutput } from 'livekit-server-sdk';
 import { NextRequest, NextResponse } from 'next/server';
 
-// Reject identities / room names that would break the S3 key layout or escape
-// the prefix. Both are caller-controlled and interpolated straight into a path.
-function isValidSegment(s: string) {
-  return s.length > 0 && !/[\\/\x00]/.test(s) && !s.startsWith('.');
+function sanitizeSegment(s: string) {
+  const cleaned = s.replace(/[\\/\x00]/g, '_').replace(/^\.+/, '_');
+  return cleaned.length > 0 ? cleaned : '_';
 }
 
 export async function GET(req: NextRequest) {
   try {
     const roomName = req.nextUrl.searchParams.get('roomName');
-    const identity = req.nextUrl.searchParams.get('identity');
 
     /**
      * CAUTION:
@@ -19,17 +17,8 @@ export async function GET(req: NextRequest) {
      * DO NOT USE THIS FOR PRODUCTION PURPOSES AS IS
      */
 
-    if (roomName === null) {
+    if (roomName === null || roomName.length === 0) {
       return new NextResponse('Missing roomName parameter', { status: 403 });
-    }
-    if (identity === null) {
-      return new NextResponse('Missing identity parameter', { status: 403 });
-    }
-    if (!isValidSegment(roomName)) {
-      return new NextResponse('Invalid roomName parameter', { status: 400 });
-    }
-    if (!isValidSegment(identity)) {
-      return new NextResponse('Invalid identity parameter', { status: 400 });
     }
 
     const {
@@ -47,52 +36,80 @@ export async function GET(req: NextRequest) {
     hostURL.protocol = 'https:';
 
     const egressClient = new EgressClient(hostURL.origin, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+    const roomClient = new RoomServiceClient(hostURL.origin, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
 
-    // Per-participant guard: it's fine for two participants in the same room to
-    // each record themselves concurrently. Only block if *this* identity is already
-    // being recorded.
-    const existingEgresses = await egressClient.listEgress({ roomName });
-    const myActive = existingEgresses.filter(
-      (e) =>
-        e.status < 2 && e.request.case === 'participant' && e.request.value.identity === identity,
-    );
-    if (myActive.length > 0) {
-      return new NextResponse('Participant is already being recorded', { status: 409 });
+    // start a participant egress for every participant
+    // currently in the room. Late joiners are not recorded.
+    // recording is treated as a snapshot taken at start time.
+    const [participants, existingEgresses] = await Promise.all([
+      roomClient.listParticipants(roomName),
+      egressClient.listEgress({ roomName }),
+    ]);
+
+    if (participants.length === 0) {
+      return new NextResponse('No participants in room', { status: 409 });
     }
 
-    const recordingPrefix = `${roomName}/${identity}/${new Date(Date.now()).toISOString()}`;
+    // Skip identities already being recorded (idempotent for retries / new
+    // joiners triggering a re-snapshot).
+    const alreadyRecording = new Set(
+      existingEgresses
+        .filter((e) => e.status < 2 && e.request.case === 'participant' && e.request.value.identity)
+        .map((e) => (e.request.value as { identity: string }).identity),
+    );
+    const toRecord = participants.filter((p) => !alreadyRecording.has(p.identity));
 
-    // Segmented output = hls with .ts segments vs. encoded file output = single .mp4
-    const segmentsOutput = new SegmentedFileOutput({
-      filenamePrefix: `${recordingPrefix}/segment`,
-      playlistName: `${recordingPrefix}/playlist.m3u8`,
-      segmentDuration: 5,
-      output: {
-        case: 's3',
-        value: new S3Upload({
-          endpoint: S3_ENDPOINT,
-          accessKey: S3_KEY_ID,
-          secret: S3_KEY_SECRET,
-          region: S3_REGION,
-          bucket: S3_BUCKET,
-        }),
-      },
-    });
+    if (toRecord.length === 0) {
+      return new NextResponse('All participants already being recorded', { status: 409 });
+    }
 
-    const egressInfo = await egressClient.startParticipantEgress(roomName, identity, {
-      segments: segmentsOutput,
-    });
+    // One timestamp for the whole batch so all participants in this snapshot
+    // share a recording "session" prefix.
+    const sessionTimestamp = new Date().toISOString();
+    const safeRoom = sanitizeSegment(roomName);
 
-    console.log('[record/start] participant egress started', {
-      egressId: egressInfo.egressId,
+    const results = await Promise.allSettled(
+      toRecord.map(async (p) => {
+        const recordingPrefix = `${safeRoom}/${sanitizeSegment(p.identity)}/${sessionTimestamp}`;
+        // Segmented output = HLS with .ts segments vs. encoded file output = single .mp4
+        const segmentsOutput = new SegmentedFileOutput({
+          filenamePrefix: `${recordingPrefix}/segment`,
+          playlistName: `${recordingPrefix}/playlist.m3u8`,
+          segmentDuration: 5,
+          output: {
+            case: 's3',
+            value: new S3Upload({
+              endpoint: S3_ENDPOINT,
+              accessKey: S3_KEY_ID,
+              secret: S3_KEY_SECRET,
+              region: S3_REGION,
+              bucket: S3_BUCKET,
+            }),
+          },
+        });
+        const egressInfo = await egressClient.startParticipantEgress(roomName, p.identity, {
+          segments: segmentsOutput,
+        });
+        return { identity: p.identity, egressId: egressInfo.egressId, prefix: recordingPrefix };
+      }),
+    );
+
+    const started = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.filter((r) => r.status === 'rejected');
+
+    console.log('[record/start] room egress started', {
       roomName,
-      identity,
-      status: egressInfo.status,
-      prefix: recordingPrefix,
-      error: egressInfo.error,
+      requested: toRecord.length,
+      started,
+      failed: failed.length,
+      failures: failed.map((r) => (r as PromiseRejectedResult).reason?.message),
     });
 
-    return new NextResponse(null, { status: 200 });
+    if (started === 0) {
+      return new NextResponse('Failed to start any recordings', { status: 500 });
+    }
+
+    return NextResponse.json({ started, failed: failed.length });
   } catch (error) {
     if (error instanceof Error) {
       console.error('[record/start] failed', error);

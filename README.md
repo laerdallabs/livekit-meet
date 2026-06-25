@@ -26,7 +26,7 @@ LiveKit Meet is an open source video conferencing app built on [LiveKit Componen
 
 This fork adds an in-browser recordings library on top of the upstream LiveKit Meet:
 
-- **HLS participant recording** — the in-meeting "Record" button uses `startParticipantEgress` with `SegmentedFileOutput`, writing per-participant `.m3u8` playlists + `.ts` segments to S3 (instead of a single MP4). Two participants in the same room can record themselves concurrently.
+- **HLS room recording** — the in-meeting "Record" button takes a snapshot of everyone currently in the room and starts a `startParticipantEgress` (with `SegmentedFileOutput`) for each participant. Each participant's `.m3u8` playlist + `.ts` segments are written to S3 under `${roomName}/${identity}/${timestamp}/`. Late joiners are not recorded; participants who leave have their egress auto-ended. Clicking Stop ends all active egresses for the room.
 - **`/recordings` page** — lists every HLS recording (and any legacy MP4s) found in the configured S3 bucket, with built-in playback via [hls.js](https://github.com/video-dev/hls.js) (Safari uses native HLS). Gated behind `NEXT_PUBLIC_SHOW_RECORDINGS=true`.
 - **Bucket-shape agnostic listing** — the `/api/recordings` endpoint does a flat S3 scan and infers `roomName` / `identity` / `recordedAt` from path segments, so it works with our own 3-level layout (`room/identity/timestamp/`) and deeper externally-produced layouts (e.g. 5-level UUID paths) without changes.
 - **60s in-memory response cache** on `/api/recordings` to avoid re-scanning large buckets on every page load (`?refresh=1` bypasses it).
