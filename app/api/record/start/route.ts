@@ -35,9 +35,12 @@ export async function GET(req: NextRequest) {
     const hostURL = new URL(LIVEKIT_URL!);
     hostURL.protocol = 'https:';
 
+    if (!S3_BUCKET || !S3_REGION || !S3_KEY_ID || !S3_KEY_SECRET) {
+      return new NextResponse('S3 recording output is not configured on this server', { status: 500 });
+    }
+
     const egressClient = new EgressClient(hostURL.origin, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
     const roomClient = new RoomServiceClient(hostURL.origin, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
-
     // start a participant egress for every participant
     // currently in the room. Late joiners are not recorded.
     // recording is treated as a snapshot taken at start time.
