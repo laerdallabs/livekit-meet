@@ -114,9 +114,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ started, failed: failed.length });
   } catch (error) {
-    if (error instanceof Error) {
-      console.error('[record/start] failed', error);
-      return new NextResponse(error.message, { status: 500 });
-    }
+    console.error('[record/start] failed', error);
+    const message = error instanceof Error ? error.message : 'Failed to start recording';
+    return new NextResponse(message, { status: 500 });
   }
 }
