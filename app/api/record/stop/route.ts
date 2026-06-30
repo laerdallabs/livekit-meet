@@ -22,15 +22,23 @@ export async function GET(req: NextRequest) {
     hostURL.protocol = 'https:';
 
     const egressClient = new EgressClient(hostURL.origin, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+
+    // Stop every active participant egress in the room. Participant egresses
+    // for participants who already left have auto-ended; this catches the rest.
     const activeEgresses = (await egressClient.listEgress({ roomName })).filter(
-      (info) => info.status < 2,
+      (info) => info.status < 2 && info.request.case === 'participant',
     );
     if (activeEgresses.length === 0) {
       return new NextResponse('No active recording found', { status: 404 });
     }
     await Promise.all(activeEgresses.map((info) => egressClient.stopEgress(info.egressId)));
 
-    return new NextResponse(null, { status: 200 });
+    console.log('[record/stop] stopped room egresses', {
+      roomName,
+      stopped: activeEgresses.length,
+    });
+
+    return NextResponse.json({ stopped: activeEgresses.length });
   } catch (error) {
     if (error instanceof Error) {
       return new NextResponse(error.message, { status: 500 });

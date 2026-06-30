@@ -1,10 +1,8 @@
 'use client';
 import * as React from 'react';
-import { Track } from 'livekit-client';
 import {
   useMaybeLayoutContext,
   MediaDeviceMenu,
-  TrackToggle,
   useRoomContext,
   useIsRecording,
 } from '@livekit/components-react';
@@ -37,6 +35,9 @@ export function SettingsMenu(props: SettingsMenuProps) {
   );
   const [activeTab, setActiveTab] = React.useState(tabs[0]);
 
+  // Recording is room-scoped: clicking Start snapshots all current
+  // participants and starts a participant egress for each. The room-wide
+  // isRecording flag flips true as soon as any of those egresses is active.
   const isRecording = useIsRecording();
   const [initialRecStatus, setInitialRecStatus] = React.useState(isRecording);
   const [processingRecRequest, setProcessingRecRequest] = React.useState(false);
@@ -56,14 +57,10 @@ export function SettingsMenu(props: SettingsMenuProps) {
     }
     setProcessingRecRequest(true);
     setInitialRecStatus(isRecording);
-    let response: Response;
-    if (isRecording) {
-      response = await fetch(recordingEndpoint + `/stop?roomName=${room.name}`);
-    } else {
-      response = await fetch(recordingEndpoint + `/start?roomName=${room.name}`);
-    }
-    if (response.ok) {
-    } else {
+    const roomName = encodeURIComponent(room.name);
+    const action = isRecording ? 'stop' : 'start';
+    const response = await fetch(`${recordingEndpoint}/${action}?roomName=${roomName}`);
+    if (!response.ok) {
       console.error(
         'Error handling recording request, check server logs:',
         response.status,
